@@ -223,7 +223,9 @@ pub const Session = struct {
                 self.active = false;
                 self.connected = false;
 
-                self.server.handler.onDisconnect(self);
+                if (self.connected) {
+                    self.server.handler.onDisconnect(self);
+                }
             },
             else => {
                 std.debug.print("Unhandled packet: {any}\n", .{packetId});
