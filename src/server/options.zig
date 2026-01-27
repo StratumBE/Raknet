@@ -7,5 +7,5 @@ pub const Options = struct {
     tickRate: u16 = 20,
     advertisement: []const u8 = "",
     timeout: i64 = 10_000,
-    maxSessions: usize = 20,
+    maxSessions: i32 = 20,
 };

@@ -23,7 +23,7 @@ pub fn main() void {
     const allocator = gpa.allocator();
 
     var server = Server.init(.{
-        .address = "127.0.0.1",
+        .address = "0.0.0.0",
     }, allocator) catch |err| {
         std.debug.print("Error creating server: {any}\n", .{err});
         return;

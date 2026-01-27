@@ -59,7 +59,7 @@ pub const Server = struct {
     ///
     /// The server GUID is automatically generated.
     pub fn init(options: Options, allocator: std.mem.Allocator) !Server {
-        return .{
+        var server = Server{
             .options = options,
             .allocator = allocator,
             .sessions = std.AutoHashMap(u64, Session).init(allocator),
@@ -70,13 +70,19 @@ pub const Server = struct {
             .ioMux = try Mux.IoMux.init(allocator),
             .ownsMux = true,
         };
+
+        if (options.maxSessions > 0) {
+            try server.sessions.ensureTotalCapacity(@intCast(options.maxSessions));
+        }
+
+        return server;
     }
 
     /// Initialize a new server using an existing IoMux.
     ///
     /// Useful if you want to share an IoMux across multiple servers.
     pub fn initWithMux(options: Options, allocator: std.mem.Allocator, ioMux: Mux.IoMux) Server {
-        return .{
+        var server = Server{
             .options = options,
             .allocator = allocator,
             .sessions = std.AutoHashMap(u64, Session).init(allocator),
@@ -86,6 +92,12 @@ pub const Server = struct {
             .ioMux = ioMux,
             .ownsMux = false,
         };
+
+        if (options.maxSessions > 0) {
+            try server.sessions.ensureTotalCapacity(@intCast(options.maxSessions));
+        }
+
+        return server;
     }
 
     /// Clean up the server and all active sessions.
@@ -249,6 +261,12 @@ pub const Server = struct {
                     self.send(replyData, address);
 
                     if (!self.sessions.contains(key)) {
+                        if (self.options.maxSessions > 0 and self.sessions.count() == @as(u32, @intCast(self.options.maxSessions))) {
+                            self.send(&[1]u8{@intFromEnum(Protocol.PacketID.ConnectionAttemptFailed)}, address);
+
+                            return;
+                        }
+
                         const session = Session.init(self, address, request.mtuSize, request.clientGUID) catch |err| {
                             std.debug.print("Session init error: {any}\n", .{err});
                             return;

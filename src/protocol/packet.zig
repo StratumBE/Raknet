@@ -12,6 +12,7 @@ pub const PacketID = enum(u8) {
 
     ConnectionRequest = 0x09,
     ConnectionRequestAccepted = 0x10,
+    ConnectionAttemptFailed = 0x11,
     NewIncomingConnection = 0x13,
 
     DisconnectNotification = 0x15,
