@@ -264,7 +264,6 @@ pub const Session = struct {
                 var frameset = Messages.FrameSet.init(seq, f);
                 const serialized = frameset.serialize(&writer) catch continue;
                 self.send(serialized);
-                frameset.deinit(self.allocator);
             }
         }
     }
@@ -819,7 +818,7 @@ const SessionState = struct {
                 var frame: *Frame = @constCast(constFrame);
                 if (frame.shouldFree) frame.deinit(allocator);
             }
-            allocator.free(frames);
+            if (frames.len != 0) allocator.free(frames);
         }
         self.outputBackup.deinit();
 

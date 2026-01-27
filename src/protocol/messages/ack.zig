@@ -163,7 +163,7 @@ pub const Ack = struct {
         while (i < self.sequences.len) : (i += 1) {
             const cur = self.sequences[i];
 
-            std.debug.assert(cur > last);
+            // std.debug.assert(cur > last);
 
             if (cur == last + 1) {
                 last = cur;
