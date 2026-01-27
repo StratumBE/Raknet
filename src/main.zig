@@ -51,6 +51,8 @@ pub fn main() void {
 
     var server = Server.init(.{
         .address = "0.0.0.0",
+        .maxSessions = -1,
+        .port = 14232,
     }, handler.handler(), allocator) catch |err| {
         std.debug.print("Error creating server: {any}\n", .{err});
         return;

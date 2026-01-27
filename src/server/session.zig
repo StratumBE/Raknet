@@ -305,14 +305,14 @@ pub const Session = struct {
             }
         }
 
-        self.state.receivedSequences.appendAssumeCapacity(sequence);
+        try self.state.receivedSequences.append(self.allocator, sequence);
         arrayRemove(&self.state.lostSequences, sequence);
 
         const lastSeq = self.state.lastInputSequence;
         if (sequence > lastSeq + 1) {
             var i: i32 = lastSeq + 1;
             while (i < sequence) : (i += 1) {
-                self.state.lostSequences.appendAssumeCapacity(@intCast(i));
+                try self.state.lostSequences.append(self.allocator, @intCast(i));
             }
         }
 
@@ -321,7 +321,7 @@ pub const Session = struct {
             try self.handleFrame(frame);
         }
 
-        self.state.receivedSequences.appendAssumeCapacity(sequence);
+        try self.state.receivedSequences.append(self.allocator, sequence);
     }
 
     /// Handles a single frame.
