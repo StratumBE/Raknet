@@ -285,16 +285,27 @@ pub const Server = struct {
             return error.ServerAlreadyListening;
         }
 
-        const eventCount = maxEvents orelse 500;
+        const eventCount = maxEvents orelse 512;
 
         try self.ioMux.add(self.socket.handle);
         self.running = true;
 
         var buf: [1500]u8 = undefined;
 
+        var nextTick = std.time.milliTimestamp() + self.options.tickRate;
+
         while (true) {
+            const now = std.time.milliTimestamp();
+
+            var waitMs: i64 = 0;
+            if (nextTick > now) {
+                waitMs = nextTick - now;
+            } else {
+                waitMs = 0;
+            }
+
             var events: [eventCount]Mux.IoEvent = undefined;
-            const n = try self.ioMux.wait(events[0..], 5);
+            const n = try self.ioMux.wait(events[0..], @intCast(waitMs));
 
             for (events[0..n]) |event| {
                 if (event.fd == self.socket.handle and event.readable) {
@@ -308,7 +319,15 @@ pub const Server = struct {
                 }
             }
 
-            self.tick();
+            const end = std.time.milliTimestamp();
+            if (end >= nextTick) {
+                self.tick();
+                nextTick += self.options.tickRate;
+
+                if (nextTick < end) {
+                    nextTick = end + self.options.tickRate;
+                }
+            }
         }
     }
 

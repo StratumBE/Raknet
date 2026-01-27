@@ -57,7 +57,7 @@ pub fn main() void {
     };
     defer server.deinit();
 
-    server.listen(null) catch |err| {
+    server.listen(64) catch |err| {
         std.debug.print("Error listening: {any}\n", .{err});
         return;
     };
