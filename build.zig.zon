@@ -37,11 +37,11 @@
             .hash = "BinaryUtils-0.0.0-FvyH4aOBAABk-a1ZH_6v5-YY7jZrgc0CNI3KbprEzlWP",
         },
         .IoMux = .{
-            .url = "git+https://codeberg.org/Stratum/IoMux#9aa4646a7497ce3c13b584e4de1a481b8c841d48",
-            .hash = "IoMux-0.0.0-VW8qAwsoAAAoUAiBQK27tEQGptnQLWqMa2rXhK7fSos5",
+            .url = "git+https://codeberg.org/Stratum/IoMux#c270340daa7655ecd312d0196be759090b739cf4",
+            .hash = "IoMux-0.0.0-VW8qA3gmAABndjG-6iP86n5a76m0yFGtFRF7lXWng99a",
         },
         .Socket = .{
-            .url = "git+https://github.com/StratumBE/Socket#81144fad6d439a59eb97595bb956403be5bdfaae",
+            .url = "git+https://codeberg.org/Stratum/Socket#81144fad6d439a59eb97595bb956403be5bdfaae",
             .hash = "Socket-0.0.0-v30WencpAACtnfYRAXvASp7rqxNvWIeupIRX4Mabdm0h",
         },
     },
