@@ -9,38 +9,62 @@ const Messages = Protocol.Messages;
 const Priority = Protocol.Priority;
 const Constants = Protocol.Constants;
 
+// Little util
+fn arrayContains(list: []const u24, value: u24) bool {
+    for (list) |item| {
+        if (item == value) return true;
+    }
+    return false;
+}
+
+fn arrayRemove(list: *std.ArrayList(u24), value: u24) void {
+    var i: usize = 0;
+    while (i < list.items.len) : (i += 1) {
+        if (list.items[i] == value) {
+            // Shift everything after i down by 1
+            var j: usize = i;
+            while (j + 1 < list.items.len) : (j += 1) {
+                list.items[j] = list.items[j + 1];
+            }
+            // shrink length
+            list.items = list.items[0 .. list.items.len - 1];
+            return;
+        }
+    }
+}
+
 /// Represents a client connection session.
 /// This struct is mostly managed internally by the server.
 /// It handles packet processing, sequencing, fragmentation, and timeouts.
 pub const Session = struct {
-    server: *Server,
     /// Reference to the server that owns this session.
-    address: std.net.Address,
+    server: *Server,
     /// Remote client address.
-    key: u64,
+    address: std.net.Address,
     /// Hashed version of the address for lookup in server's session map.
-    mtuSize: u16,
+    key: u64,
     /// Maximum Transmission Unit for this session (largest packet size allowed).
-    guid: u64,
+    mtuSize: u16,
     /// Client unique identifier.
-    connected: bool,
+    guid: u64,
     /// True if session has completed the connection handshake.
-    active: bool,
+    connected: bool,
     /// True if session is currently active; becomes false on timeout or disconnect.
-    state: SessionState,
+    active: bool,
     /// Internal state: output queues, received sequences, ordering queues, and fragment queues.
-    allocator: std.mem.Allocator,
+    state: SessionState,
     /// Allocator used for session-local memory (frames, packet copies).
-    lastReceive: i64,
+    allocator: std.mem.Allocator,
     /// Timestamp (ms) of last received packet from client.
-    lastPing: i64 = 0,
+    lastReceive: i64,
     /// Timestamp of the last ping sent to client.
-    pingInterval: u64 = 5000,
+    lastPing: i64 = 0,
     /// Interval in milliseconds between automatic pings.
-    gamePacketCb: ?*const fn (*Session, []const u8, ?*anyopaque) void = null,
-    /// Optional callback invoked when a game-specific packet is received.
-    gamePacketCtx: ?*anyopaque = null,
-    /// Optional context pointer passed to `gamePacketCb`.
+    pingInterval: u64 = 5000,
+
+    ackBuffer: []u24,
+    nackBuffer: []u24,
+
     /// Initializes a new session.
     /// Allocates internal state and sets up an arena.
     pub fn init(server: *Server, address: std.net.Address, mtuSize: u16, guid: u64) !Session {
@@ -55,12 +79,16 @@ pub const Session = struct {
             .lastReceive = std.time.milliTimestamp(),
             .allocator = server.allocator,
             .state = try SessionState.init(server.allocator),
+            .ackBuffer = try server.allocator.alloc(u24, Constants.MAX_SEQUENCES),
+            .nackBuffer = try server.allocator.alloc(u24, Constants.MAX_SEQUENCES),
         };
     }
 
     /// Deinitializes a session, freeing all allocated memory in the arena.
     pub fn deinit(self: *Session) void {
         _ = self.state.deinit(self.allocator);
+        self.allocator.free(self.ackBuffer);
+        self.allocator.free(self.nackBuffer);
     }
 
     /// Performs a tick/update for the session.
@@ -86,20 +114,16 @@ pub const Session = struct {
             if (self.state.outputFrameQueue.items.len >= beforeLen) break;
         }
 
-        if (self.state.receivedSequences.count() > 0) {
-            var sequences = std.ArrayList(u24).initCapacity(self.allocator, 1) catch {
-                return;
-            };
-            defer sequences.deinit(self.allocator);
-
-            var iter = self.state.receivedSequences.keyIterator();
-            while (iter.next()) |key| {
-                sequences.append(self.allocator, key.*) catch continue;
+        if (self.state.receivedSequences.items.len > 0) {
+            var count: usize = 0;
+            for (self.state.receivedSequences.items) |key| {
+                if (count < self.ackBuffer.len) self.ackBuffer[count] = key;
+                count += 1;
             }
-            self.state.receivedSequences.clearRetainingCapacity();
-            if (sequences.items.len == 0) return;
 
-            var ack = Messages.Ack{ .sequences = sequences.items };
+            self.state.receivedSequences.clearRetainingCapacity();
+
+            var ack = Messages.Ack{ .sequences = self.ackBuffer[0..count] };
 
             self.server.packetBuf.reset(false);
             var writer = self.server.packetBuf.writer;
@@ -110,21 +134,16 @@ pub const Session = struct {
             self.send(serialized);
         }
 
-        if (self.state.lostSequences.count() > 0) {
-            var sequences = std.ArrayList(u24).initCapacity(self.allocator, 1) catch |err| {
-                std.debug.print("Error ticking: {any}\n", .{err});
-                return;
-            };
-            defer sequences.deinit(self.allocator);
-
-            var iter = self.state.lostSequences.keyIterator();
-            while (iter.next()) |key| {
-                sequences.append(self.allocator, key.*) catch continue;
+        if (self.state.lostSequences.items.len > 0) {
+            var count: usize = 0;
+            for (self.state.lostSequences.items) |key| {
+                if (count < self.nackBuffer.len) self.nackBuffer[count] = key;
+                count += 1;
             }
-            self.state.lostSequences.clearRetainingCapacity();
-            if (sequences.items.len == 0) return;
 
-            var nack = Messages.Ack{ .sequences = sequences.items };
+            self.state.lostSequences.clearRetainingCapacity();
+
+            var nack = Messages.Ack{ .sequences = self.nackBuffer[0..count] };
 
             self.server.packetBuf.reset(false);
             var writer = self.server.packetBuf.writer;
@@ -256,7 +275,9 @@ pub const Session = struct {
                 var frameset = Messages.FrameSet.init(seq, f);
                 const serialized = frameset.serialize(&writer) catch continue;
                 self.send(serialized);
+                frameset.deinit(self.allocator);
             }
+            _ = self.state.outputBackup.remove(seq);
         }
     }
 
@@ -276,7 +297,7 @@ pub const Session = struct {
             const receivedSeqs = self.state.receivedSequences;
 
             const isOldSequence = lastSeq != -1 and sequence <= @as(u24, @intCast(@max(0, lastSeq)));
-            const alreadyReceived = receivedSeqs.contains(sequence);
+            const alreadyReceived = arrayContains(receivedSeqs.items, sequence);
 
             const isDuplicate = isOldSequence or alreadyReceived;
             if (isDuplicate) {
@@ -284,16 +305,14 @@ pub const Session = struct {
             }
         }
 
-        self.state.receivedSequences.put(sequence, null) catch {
-            return;
-        };
-        _ = self.state.lostSequences.remove(sequence);
+        self.state.receivedSequences.appendAssumeCapacity(sequence);
+        arrayRemove(&self.state.lostSequences, sequence);
 
         const lastSeq = self.state.lastInputSequence;
         if (sequence > lastSeq + 1) {
             var i: i32 = lastSeq + 1;
             while (i < sequence) : (i += 1) {
-                self.state.lostSequences.put(@intCast(i), null) catch {};
+                self.state.lostSequences.appendAssumeCapacity(@intCast(i));
             }
         }
 
@@ -302,7 +321,7 @@ pub const Session = struct {
             try self.handleFrame(frame);
         }
 
-        self.sendAck(sequence);
+        self.state.receivedSequences.appendAssumeCapacity(sequence);
     }
 
     /// Handles a single frame.
@@ -726,12 +745,6 @@ pub const Session = struct {
         };
         self.sendFrame(frame, .Normal);
     }
-
-    /// Registers a callback to handle game-specific packets.
-    pub fn onGamePacket(self: *Session, cb: *const fn (*Session, []const u8, ?*anyopaque) void, ctx: ?*anyopaque) void {
-        self.gamePacketCb = cb;
-        self.gamePacketCtx = ctx;
-    }
 };
 
 /// Stores internal state for a session.
@@ -748,8 +761,8 @@ const SessionState = struct {
     outputSequenceIndex: [Constants.MAX_ACTIVE_FRAGMENTATIONS]u24,
 
     lastInputSequence: i32 = -1,
-    receivedSequences: std.AutoHashMap(u24, ?void),
-    lostSequences: std.AutoHashMap(u24, ?void),
+    receivedSequences: std.ArrayList(u24),
+    lostSequences: std.ArrayList(u24),
 
     inputHighestSequenceIndex: [Constants.MAX_ACTIVE_FRAGMENTATIONS]u32,
     inputOrderIndex: [Constants.MAX_ACTIVE_FRAGMENTATIONS]u32,
@@ -768,8 +781,8 @@ const SessionState = struct {
             .outputOrderIndex = undefined,
             .outputSequenceIndex = undefined,
             .lastInputSequence = -1,
-            .receivedSequences = std.AutoHashMap(u24, ?void).init(allocator),
-            .lostSequences = std.AutoHashMap(u24, ?void).init(allocator),
+            .receivedSequences = try std.ArrayList(u24).initCapacity(allocator, Constants.MAX_SEQUENCES),
+            .lostSequences = try std.ArrayList(u24).initCapacity(allocator, Constants.MAX_SEQUENCES),
             .inputHighestSequenceIndex = undefined,
             .inputOrderIndex = undefined,
             .inputOrderingQueue = std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)).init(allocator),
@@ -779,8 +792,8 @@ const SessionState = struct {
 
     pub fn deinit(self: *SessionState, allocator: std.mem.Allocator) void {
         // Deinit simple hash maps
-        self.receivedSequences.deinit();
-        self.lostSequences.deinit();
+        self.receivedSequences.deinit(allocator);
+        self.lostSequences.deinit(allocator);
 
         // Cleanup output frame queue
         for (self.outputFrameQueue.items) |*frame| {
@@ -810,7 +823,7 @@ const SessionState = struct {
                 var frame: *Frame = @constCast(constFrame);
                 if (frame.shouldFree) frame.deinit(allocator);
             }
-            if (frames.len != 0) allocator.free(frames);
+            allocator.free(frames);
         }
         self.outputBackup.deinit();
 

@@ -119,46 +119,18 @@ pub const Server = struct {
     /// `Session.tick()` for each active session.
     fn tick(self: *Server) void {
         // Skip if no sessions
-        if (self.sessions.count() == 0) {
-            return;
-        }
-
-        var sessions = self.allocator.alloc(*Session, self.sessions.count()) catch |err| {
-            std.debug.print("Error ticking server: {any}\n", .{err});
-            return;
-        };
-        defer self.allocator.free(sessions);
-
-        var count: usize = 0;
-        var toRemove = self.allocator.alloc(u64, self.sessions.count()) catch |err| {
-            std.debug.print("Error ticking server: {any}\n", .{err});
-            return;
-        };
-        defer self.allocator.free(toRemove);
-        var removeCount: usize = 0;
-
         var iter = self.sessions.iterator();
         while (iter.next()) |entry| {
-            if (entry.value_ptr.*.active) {
-                if (count < sessions.len) {
-                    sessions[count] = entry.value_ptr;
-                    count += 1;
-                }
-            } else {
-                toRemove[removeCount] = entry.key_ptr.*;
-                removeCount += 1;
-            }
-        }
+            const key = entry.key_ptr.*;
+            var session = entry.value_ptr;
 
-        for (sessions[0..count]) |session| {
-            session.tick();
-        }
-
-        for (toRemove[0..removeCount]) |key| {
-            if (self.sessions.getPtr(key)) |conn| {
-                conn.deinit();
+            if (!session.active) {
+                session.deinit();
                 _ = self.sessions.remove(key);
+                continue;
             }
+
+            session.tick();
         }
     }
 
