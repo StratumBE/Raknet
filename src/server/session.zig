@@ -74,9 +74,7 @@ pub const Session = struct {
         if (self.lastReceive + self.server.options.timeout < std.time.milliTimestamp()) {
             self.active = false;
 
-            if (self.server.disconnectCb) |callback| {
-                callback(self, self.server.disconnectCtx);
-            }
+            self.server.handler.onDisconnect(self);
             return;
         }
 
@@ -197,22 +195,16 @@ pub const Session = struct {
             },
             .NewIncomingConnection => {
                 self.connected = true;
-                if (self.server.connectCb) |callback| {
-                    callback(self, self.server.connectCtx);
-                }
+                self.server.handler.onConnect(self);
             },
             .GamePacket => {
-                if (self.gamePacketCb) |callback| {
-                    callback(self, payload, self.gamePacketCtx);
-                }
+                self.server.handler.onGamePacket(self, payload);
             },
             .DisconnectNotification => {
                 self.active = false;
                 self.connected = false;
 
-                if (self.server.disconnectCb) |callback| {
-                    callback(self, self.server.disconnectCtx);
-                }
+                self.server.handler.onDisconnect(self);
             },
             else => {
                 std.debug.print("Unhandled packet: {any}\n", .{packetId});

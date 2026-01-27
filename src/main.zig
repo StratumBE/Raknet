@@ -1,20 +1,45 @@
 const std = @import("std");
 const Raknet = @import("Raknet");
+const Handler = Raknet.Handler;
 const Server = Raknet.Server;
 const Session = Raknet.Session;
 
-fn onGamePacket(conn: *Session, payload: []const u8, _: ?*anyopaque) void {
-    std.debug.print("GamePacket received, guid={d} len={d} data={any}\n", .{ conn.guid, payload.len, payload });
-}
+const MyHandler = struct {
+    counter: usize,
 
-fn onConnect(conn: *Session, _: ?*anyopaque) void {
-    std.debug.print("Session connected, guid: {d}\n", .{conn.guid});
-    conn.onGamePacket(onGamePacket, null);
-}
+    fn onConnect(ctx: *anyopaque, session: *Session) void {
+        const self: *MyHandler = @ptrCast(@alignCast(ctx));
+        self.counter += 1;
 
-fn onDisconnect(conn: *Session, _: ?*anyopaque) void {
-    std.debug.print("Session disconnected, guid: {d}\n", .{conn.guid});
-}
+        std.debug.print("Session connected, guid: {d}\nCurrently connected: {d}\n", .{ session.guid, self.counter });
+    }
+
+    pub fn onDisconnect(ctx: *anyopaque, session: *Session) void {
+        const self: *MyHandler = @ptrCast(@alignCast(ctx));
+        self.counter -= 1;
+
+        std.debug.print("Session disconnected, guid: {d}\nCurrently connected: {d}\n", .{ session.guid, self.counter });
+    }
+
+    pub fn onGamePacket(ctx: *anyopaque, session: *Session, payload: []const u8) void {
+        _ = ctx;
+
+        std.debug.print("GamePacket received, guid={d} len={d} data={any}\n", .{ session.guid, payload.len, payload });
+    }
+
+    const vtable = Handler.VTable{
+        .onConnect = onConnect,
+        .onDisconnect = onDisconnect,
+        .onGamePacket = onGamePacket,
+    };
+
+    pub fn handler(self: *MyHandler) Handler {
+        return .{
+            .ctx = self,
+            .vtable = &vtable,
+        };
+    }
+};
 
 pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -22,16 +47,15 @@ pub fn main() void {
 
     const allocator = gpa.allocator();
 
+    var handler = MyHandler{ .counter = 0 };
+
     var server = Server.init(.{
         .address = "0.0.0.0",
-    }, allocator) catch |err| {
+    }, handler.handler(), allocator) catch |err| {
         std.debug.print("Error creating server: {any}\n", .{err});
         return;
     };
     defer server.deinit();
-
-    server.onConnect(onConnect, null);
-    server.onDisconnect(onDisconnect, null);
 
     server.listen(null) catch |err| {
         std.debug.print("Error listening: {any}\n", .{err});

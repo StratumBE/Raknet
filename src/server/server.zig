@@ -8,6 +8,8 @@ const Session = @import("session.zig").Session;
 const Protocol = @import("../protocol/mod.zig");
 const Messages = Protocol.Messages;
 
+const Handler = @import("handler.zig");
+
 pub fn generateGUID() u64 {
     return std.crypto.random.int(u64);
 }
@@ -43,22 +45,13 @@ pub const Server = struct {
     /// True if the server owns the IoMux instance and should deinit it.
     ownsMux: bool,
 
-    /// Optional callback invoked when a new session connects.
-    connectCb: ?*const fn (*Session, ?*anyopaque) void = null,
-
-    /// Optional context pointer passed to `connectCb`.
-    connectCtx: ?*anyopaque = null,
-
-    /// Optional callback invoked when a session disconnects.
-    disconnectCb: ?*const fn (*Session, ?*anyopaque) void = null,
-
-    /// Optional context pointer passed to `disconnectCb`.
-    disconnectCtx: ?*anyopaque = null,
+    // Handler for server events
+    handler: Handler.Handler,
 
     /// Initialize a new server with its own `IoMux` and socket.
     ///
     /// The server GUID is automatically generated.
-    pub fn init(options: Options, allocator: std.mem.Allocator) !Server {
+    pub fn init(options: Options, handler: Handler.Handler, allocator: std.mem.Allocator) !Server {
         var server = Server{
             .options = options,
             .allocator = allocator,
@@ -69,6 +62,7 @@ pub const Server = struct {
             .packetBuf = Protocol.PacketBuffer.init(),
             .ioMux = try Mux.IoMux.init(allocator),
             .ownsMux = true,
+            .handler = handler,
         };
 
         if (options.maxSessions > 0) {
@@ -81,7 +75,7 @@ pub const Server = struct {
     /// Initialize a new server using an existing IoMux.
     ///
     /// Useful if you want to share an IoMux across multiple servers.
-    pub fn initWithMux(options: Options, allocator: std.mem.Allocator, ioMux: Mux.IoMux) Server {
+    pub fn initWithMux(options: Options, handler: Handler.Handler, allocator: std.mem.Allocator, ioMux: Mux.IoMux) Server {
         var server = Server{
             .options = options,
             .allocator = allocator,
@@ -91,6 +85,7 @@ pub const Server = struct {
             .packetBuf = Protocol.PacketBuffer.init(),
             .ioMux = ioMux,
             .ownsMux = false,
+            .handler = handler,
         };
 
         if (options.maxSessions > 0) {
@@ -350,23 +345,5 @@ pub const Server = struct {
             },
             else => 0,
         };
-    }
-
-    /// Register a callback invoked when a session connects.
-    ///
-    /// - `cb`: Function pointer that receives a `*Session` and optional context.
-    /// - `ctx`: Optional pointer passed as context to the callback.
-    pub fn onConnect(self: *Server, cb: *const fn (*Session, ?*anyopaque) void, ctx: ?*anyopaque) void {
-        self.connectCb = cb;
-        self.connectCtx = ctx;
-    }
-
-    /// Register a callback invoked when a session disconnects.
-    ///
-    /// - `cb`: Function pointer that receives a `*Session` and optional context.
-    /// - `ctx`: Optional pointer passed as context to the callback.
-    pub fn onDisconnect(self: *Server, cb: *const fn (*Session, ?*anyopaque) void, ctx: ?*anyopaque) void {
-        self.disconnectCb = cb;
-        self.disconnectCtx = ctx;
     }
 };
