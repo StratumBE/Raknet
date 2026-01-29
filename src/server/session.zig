@@ -21,12 +21,10 @@ fn arrayRemove(list: *std.ArrayList(u24), value: u24) void {
     var i: usize = 0;
     while (i < list.items.len) : (i += 1) {
         if (list.items[i] == value) {
-            // Shift everything after i down by 1
             var j: usize = i;
             while (j + 1 < list.items.len) : (j += 1) {
                 list.items[j] = list.items[j + 1];
             }
-            // shrink length
             list.items = list.items[0 .. list.items.len - 1];
             return;
         }
@@ -100,9 +98,12 @@ pub const Session = struct {
         if (!self.active) return;
 
         if (self.lastReceive + self.server.options.timeout < std.time.milliTimestamp()) {
-            self.active = false;
+            if (self.connected) {
+                self.server.handler.onDisconnect(self);
+            }
 
-            self.server.handler.onDisconnect(self);
+            self.active = false;
+            self.connected = false;
             return;
         }
 
@@ -213,19 +214,21 @@ pub const Session = struct {
                 self.sendFrame(frame, .Immediate);
             },
             .NewIncomingConnection => {
-                self.connected = true;
-                self.server.handler.onConnect(self);
+                if (!self.connected) {
+                    self.connected = true;
+                    self.server.handler.onConnect(self);
+                }
             },
             .GamePacket => {
                 self.server.handler.onGamePacket(self, payload);
             },
             .DisconnectNotification => {
-                self.active = false;
-                self.connected = false;
-
-                if (self.connected) {
+                if (self.active and self.connected) {
                     self.server.handler.onDisconnect(self);
                 }
+
+                self.active = false;
+                self.connected = false;
             },
             else => {
                 std.debug.print("Unhandled packet: {any}\n", .{packetId});
@@ -307,6 +310,9 @@ pub const Session = struct {
             }
         }
 
+        if (self.state.receivedSequences.items.len == self.state.receivedSequences.capacity - 1) {
+            _ = self.state.receivedSequences.swapRemove(0);
+        }
         try self.state.receivedSequences.append(self.allocator, sequence);
         arrayRemove(&self.state.lostSequences, sequence);
 
@@ -314,6 +320,9 @@ pub const Session = struct {
         if (sequence > lastSeq + 1) {
             var i: i32 = lastSeq + 1;
             while (i < sequence) : (i += 1) {
+                if (self.state.lostSequences.items.len == self.state.lostSequences.capacity - 1) {
+                    _ = self.state.lostSequences.swapRemove(0);
+                }
                 try self.state.lostSequences.append(self.allocator, @intCast(i));
             }
         }
@@ -322,8 +331,6 @@ pub const Session = struct {
         for (set.frames) |frame| {
             try self.handleFrame(frame);
         }
-
-        try self.state.receivedSequences.append(self.allocator, sequence);
     }
 
     /// Handles a single frame.
